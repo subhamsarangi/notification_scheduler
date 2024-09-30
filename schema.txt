@@ -1,0 +1,6 @@
+PurchaseOrder (id, name, expiry)
+SMTP (id, server, port, username, password, use_tls)
+NotificationType (id, name)
+EmailTemplate(subject, body, sender, cc)
+NotificationSettings (id, name, notification_type_id[FK], enabled, smtp_id[FK], email_template_id[FK])
+NotificationDays (id, notification_settings_id[FK], days_before, color_code)

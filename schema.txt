@@ -1,4 +1,4 @@
-PurchaseOrder (id, name, expiry)
+Order (id, name, expiry)
 SMTP (id, server, port, username, password, use_tls)
 NotificationType (id, name)
 EmailTemplate(subject, body, sender, cc)

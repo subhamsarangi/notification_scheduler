@@ -1,7 +1,3 @@
-Here's an updated version of your project overview, incorporating the recent changes and enhancements:
-
----
-
 # Project Overview
 
 This project is a notification management system built using Flask and PostgreSQL. It allows users to manage various types of notifications, including email and web notifications, with customizable settings, templates, and mediums.

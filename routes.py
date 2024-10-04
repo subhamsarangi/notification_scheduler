@@ -23,13 +23,14 @@ def get_purchase_orders():
 
     notification_name = "PO Expiry"
 
-    query = NotificationDays.query.join(NotificationMediums).join(NotificationSettings)
-
-    if notification_name:
-        query = query.filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
-    query = query.filter(NotificationMediums.enabled == True)
-
-    notification_days = query.order_by(NotificationDays.days_before).all()
+    notification_days = (
+        NotificationDays.query.join(NotificationMediums)
+        .join(NotificationSettings)
+        .filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
+        .filter(NotificationMediums.enabled == True)
+        .order_by(NotificationDays.days_before)
+        .all()
+    )
 
     for po in purchase_orders:
         future_date = datetime.strptime(str(po.expiry), "%Y-%m-%d").date()
@@ -50,6 +51,7 @@ def get_purchase_orders():
             }
         )
 
+    return jsonify(response)
     return render_template("index.html", response=response)
 
 

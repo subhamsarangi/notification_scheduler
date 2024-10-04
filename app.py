@@ -15,7 +15,7 @@ def create_app():
     app.config["SQLALCHEMY_RECORD_QUERIES"] = True
 
     db.init_app(app)
-    app.register_blueprint(api)
+    app.register_blueprint(api, url_prefix="/api")
 
     DebugToolbarExtension(app)
     app.config["DEBUG_TB_PROFILER_ENABLED"] = True

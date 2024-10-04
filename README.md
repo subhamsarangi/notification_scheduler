@@ -1,5 +1,7 @@
 # NotiSch - the notification scheduler and management
-This project is a notification management system built using Flask and PostgreSQL. It allows users to manage various types of notifications, including email and web notifications, with customizable settings, templates, and mediums.
+This project is a notification management system built using Flask.
+
+It allows users to manage various types of notifications, including email and web notifications, with customizable settings, templates, and mediums.
 
 ## Features
 

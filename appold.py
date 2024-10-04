@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from flask_debugtoolbar import DebugToolbarExtension
@@ -33,6 +33,11 @@ class SMTP(db.Model):
     use_tls = db.Column(db.Boolean, default=True)
 
 
+class NotificationType(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+
+
 class EmailTemplate(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     subject = db.Column(db.String(100), nullable=False)
@@ -41,35 +46,23 @@ class EmailTemplate(db.Model):
     cc = db.Column(db.String(100))
 
 
-class NotificationType(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-
-
 class NotificationSettings(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-
-
-class NotificationMediums(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    notification_settings_id = db.Column(
-        db.Integer, db.ForeignKey("notification_settings.id"), nullable=False
-    )
     notification_type_id = db.Column(
         db.Integer, db.ForeignKey("notification_type.id"), nullable=False
     )
-    email_template_id = db.Column(
-        db.Integer, db.ForeignKey("email_template.id"), nullable=True
-    )
-    smtp_id = db.Column(db.Integer, db.ForeignKey("smtp.id"), nullable=True)
     enabled = db.Column(db.Boolean, default=True)
+    smtp_id = db.Column(db.Integer, db.ForeignKey("smtp.id"), nullable=False)
+    email_template_id = db.Column(
+        db.Integer, db.ForeignKey("email_template.id"), nullable=False
+    )
 
 
 class NotificationDays(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    notification_medium_id = db.Column(
-        db.Integer, db.ForeignKey("notification_mediums.id"), nullable=False
+    notification_settings_id = db.Column(
+        db.Integer, db.ForeignKey("notification_settings.id"), nullable=False
     )
     days_before = db.Column(db.Integer, nullable=False)
     color_code = db.Column(db.String(10), nullable=False)
@@ -80,29 +73,27 @@ with app.app_context():
     db.create_all()
 
 
+# Define the route to get PurchaseOrders with color codes
 @app.route("/purchase_orders", methods=["GET"])
 def get_purchase_orders():
     current_date = datetime.now().date()
     purchase_orders = PurchaseOrder.query.all()
     response = []
 
-    notification_name = "PO Expiry"
-
-    # Build the query for NotificationDays with search filters
-    query = NotificationDays.query.join(NotificationMediums).join(NotificationSettings)
-
-    # Apply filters based on search parameters
-    if notification_name:
-        query = query.filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
-    query = query.filter(NotificationMediums.enabled == True)
-
-    notification_days = query.order_by(NotificationDays.days_before).all()
-
+    notification_days = (
+        NotificationDays.query.join(NotificationSettings)
+        .filter(
+            NotificationSettings.name == "PO Expiry Notification",
+        )
+        .order_by(NotificationDays.days_before)
+        .all()
+    )
+    print(notification_days)
     for po in purchase_orders:
         future_date = datetime.strptime(str(po.expiry), "%Y-%m-%d").date()
         difference = (future_date - current_date).days
+        print(po.id, difference)
         color_code = None
-
         for x in notification_days:
             if difference <= x.days_before:
                 color_code = x.color_code
@@ -117,6 +108,7 @@ def get_purchase_orders():
             }
         )
 
+    # return jsonify(response)
     return render_template("index.html", response=response)
 
 

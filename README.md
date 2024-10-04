@@ -1,5 +1,4 @@
-# Project Overview
-
+# NotiSch - the notification scheduler and management
 This project is a notification management system built using Flask and PostgreSQL. It allows users to manage various types of notifications, including email and web notifications, with customizable settings, templates, and mediums.
 
 ## Features
@@ -19,4 +18,4 @@ The project includes several RESTful API endpoints to interact with notification
 1. **Clone the repository**.
 2. **Install poetry for dependency management**
 3. **Install required packages** using `poetry install`.
-4. **Run the Flask application** using `python app.py`.
+4. **Run the Flask application** using `python app.py` or `flask run`.

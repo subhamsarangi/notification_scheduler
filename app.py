@@ -1,5 +1,6 @@
 from flask import Flask
 from flask_debugtoolbar import DebugToolbarExtension
+from flask_cors import CORS
 from dotenv import load_dotenv
 
 from models import db
@@ -15,6 +16,12 @@ def create_app():
 
     # Load the configuration
     app.config.from_object(Config)
+
+    # Enable CORS for all routes and allow requests from localhost:5000
+    CORS(
+        app,
+        resources={r"/*": {"origins": ["http://127.0.0.1:5500"]}},
+    )
 
     db.init_app(app)
     app.register_blueprint(api, url_prefix="/api")

@@ -17,6 +17,6 @@ The project includes several RESTful API endpoints to interact with notification
 ## Getting Started
 
 1. **Clone the repository**.
-2. **Set up a PostgreSQL database**.
-3. **Install required packages** using `pip install -r requirements.txt`.
-4. **Run the Flask application** using `flask run`.
+2. **Install poetry for dependency management**
+3. **Install required packages** using `poetry install`.
+4. **Run the Flask application** using `python app.py`.

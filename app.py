@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask
 from flask_debugtoolbar import DebugToolbarExtension
 from flask_cors import CORS
@@ -30,6 +32,10 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+
+    os.makedirs("files", exist_ok=True)
+    with open("files/sample.txt", "w") as f:
+        f.write("This is a test file.")
 
     return app
 

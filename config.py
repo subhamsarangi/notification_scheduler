@@ -7,3 +7,6 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_RECORD_QUERIES = True
     DEBUG_TB_PROFILER_ENABLED = True
+
+
+print("ehy")

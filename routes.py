@@ -1,277 +1,599 @@
-from flask import Blueprint, request, jsonify, render_template
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
+import json
 
+from sqlalchemy import text, and_
+from flask import (
+    Blueprint,
+    request,
+    jsonify,
+    make_response,
+    send_file,
+    after_this_request,
+    render_template,
+)
+from flask.views import MethodView
+from flask_cors import cross_origin
 
-from utils import handle_exceptions
+from utils import handle_exceptions, check_smtp, send_email, smtp_details
 from models import (
     db,
     PurchaseOrder,
     SMTP,
     NotificationType,
-    EmailTemplate,
     NotificationSettings,
     NotificationMediums,
     NotificationDays,
+    WebNotificationItem,
 )
+
 
 api = Blueprint("api", __name__)
 
 
-# list purchase orders
-@api.route("/purchase_orders", methods=["GET"])
-@handle_exceptions
-def get_purchase_orders():
-    current_date = datetime.now().date()
-    purchase_orders = PurchaseOrder.query.all()
-    response = []
+@api.route("/download/<filename>", methods=["GET"])
+def download_file(filename):
+    try:
+        current_dir = os.getcwd()
+        file_path = os.path.join(current_dir, "files", filename)
 
-    notification_name = "PO Expiry"
+        if os.path.exists(file_path):
 
-    notification_days = (
-        NotificationDays.query.join(NotificationMediums)
-        .join(NotificationSettings)
-        .filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
-        .filter(NotificationMediums.enabled == True)
-        .order_by(NotificationDays.days_before)
-        .all()
-    )
+            @after_this_request
+            def remove_file(response):
+                try:
+                    os.remove(file_path)
+                    print(f"File {filename} deleted successfully.")
+                except Exception as e:
+                    print(f"Error deleting file {filename}: {e}")
+                return response
 
-    for po in purchase_orders:
-        future_date = datetime.strptime(str(po.expiry), "%Y-%m-%d").date()
-        difference = (future_date - current_date).days
-        color_code = None
+            return send_file(file_path, as_attachment=True)
+        else:
+            return jsonify({"error": "File not found"}), 404
+    except Exception as e:
+        import traceback
 
-        for x in notification_days:
-            if difference <= x.days_before:
-                color_code = x.color_code
+        traceback.print_exc()
+        return jsonify({"error": "An error occurred"}), 500
+
+
+@api.route("/send-email", methods=["GET"])
+def send_email_view():
+    try:
+        email_data = {
+            "email_body": f"Hey <b>{{username}}</b> how was the {{product_name}}",
+            "email_cc": ["subhamsarangi2016@gmail.com"],
+            "email_recipients": ["subham.ivanweb@gmail.com", "ivan.sarangi@gmail.com"],
+            "email_subject": "TEST Recently Purchased Dummy order",
+        }
+
+        context = {"username": "Subham", "product_name": "Product XYZ"}
+
+        CONTENT = email_data["email_body"].format(**context)
+        print(CONTENT, "----------------------->")
+        email_body = render_template("email.html", content=CONTENT)
+
+        email_send_result = send_email(
+            smtp_details,
+            email_data["email_subject"],
+            email_body,
+            email_data["email_recipients"],
+            email_data["email_cc"],
+        )
+
+        if email_send_result["status"] == "success":
+            return jsonify(email_send_result), 200
+        else:
+            return jsonify(email_send_result), 500
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        return jsonify({"error": f"An unexpected error occurred. {str(e)}"}), 500
+
+
+class PurchaseOrderView(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self):
+        purchase_orders = PurchaseOrder.query.all()
+        notification_name = "PO Expiry"
+        notification_days = (
+            NotificationDays.query.select_from(NotificationDays)
+            .join(
+                NotificationMediums,
+                NotificationDays.notification_medium_id == NotificationMediums.id,
+            )
+            .join(
+                NotificationSettings,
+                NotificationMediums.notification_settings_id == NotificationSettings.id,
+            )
+            .filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
+            .filter(NotificationMediums.enabled == True)
+            .order_by(NotificationDays.start_day)
+            .all()
+        )
+        data = []
+        for po in purchase_orders:
+            po = po.to_dict()
+            future_date = datetime.strptime(str(po["expiry"]), "%Y-%m-%d").date()
+            current_date = datetime.now().date()
+            difference = (future_date - current_date).days
+            color_code = None
+            for x in notification_days:
+                if x.start_day <= difference <= x.end_day:
+                    color_code = x.color_code
+                    break
+
+            po["color_code"] = color_code
+            data.append(po)
+
+        response = {
+            "status": "success",
+            "message": "PO Master fetched successfully",
+            "POMasterList": data,
+        }
+        return make_response(jsonify(response)), 200
+
+
+class ProcessPoExpirations(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self):
+        notification_name = "PO Expiry"
+        notification_days = (
+            db.session.query(NotificationDays, NotificationMediums.smtp_id)
+            .select_from(NotificationDays)
+            .join(
+                NotificationMediums,
+                NotificationDays.notification_medium_id == NotificationMediums.id,
+            )
+            .join(
+                NotificationSettings,
+                NotificationMediums.notification_settings_id == NotificationSettings.id,
+            )
+            .filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
+            .filter(NotificationMediums.enabled == True)
+            .order_by(NotificationDays.start_day)
+            .all()
+        )
+        start_day_values = [x.start_day for x, _ in notification_days] or [0]
+        least_day = min(start_day_values)
+        least_date = (datetime.now() + timedelta(days=least_day)).strftime("%Y-%m-%d")
+        # print(start_day_values, least_day, least_date, "-------------")
+        end_day_values = [x.end_day for x, _ in notification_days] or [0]
+        highest_day = max(end_day_values)
+        highest_date = (datetime.now() + timedelta(days=highest_day)).strftime(
+            "%Y-%m-%d"
+        )
+        # print(end_day_values, highest_day, highest_date, "**************")
+
+        purchase_orders = (
+            db.session.query(PurchaseOrder)
+            .filter(PurchaseOrder.expiry.between(least_date, highest_date))
+            .all()
+        )
+        print(purchase_orders, "--------")
+        data = []
+        for po in purchase_orders:
+            po = po.to_dict()
+            data.append(po)
+            future_date = datetime.strptime(str(po["expiry"]), "%Y-%m-%d").date()
+            current_date = datetime.now().date()
+            difference = (future_date - current_date).days
+
+            notification_heading = "PO expiry alert"
+            for x, smtp_id in notification_days:
+                if difference < 0:
+                    if difference == x.start_day:
+                        notification_body = f"PO {po['name']} has expired {difference} day(s) ago on {po['expiry']}"
+                    else:
+                        continue
+                elif difference > 0:
+                    if difference == x.end_day:
+                        notification_body = f"PO {po['name']} will expire in {difference} day(s) on {po['expiry']}"
+                    else:
+                        continue
+                else:
+                    if difference == x.start_day and difference == x.end_day:
+                        notification_body = f"PO {po['name']} has expired today"
+                    else:
+                        continue
+
+                existing_notification = (
+                    db.session.query(WebNotificationItem)
+                    .filter_by(body=notification_body)
+                    .first()
+                )
+                if existing_notification:
+                    break
+                else:
+                    new_web_notification = WebNotificationItem(
+                        **{
+                            "heading": notification_heading,
+                            "body": notification_body,
+                        }
+                    )
+                    db.session.add(new_web_notification)
+                    print(f'{po["name"]} Notification created.')
+
+                    # send mail
+                    smtp_details = None
+                    if smtp_id is not None:
+                        smtp_details = SMTP.query.get(smtp_id)
+                    else:
+                        notification_medium = NotificationMediums.query.get(
+                            x.notification_medium_id
+                        )
+                        if notification_medium and notification_medium.smtp_id:
+                            smtp_details = SMTP.query.get(notification_medium.smtp_id)
+                    if smtp_details:
+                        smtp_details = smtp_details.to_dict()
+                    else:
+                        print(f'{po["name"]} Mail not sent.')
+                        continue
+                    context = {
+                        "expiry_date": po["expiry"],
+                        "po_number": po["po_number"],
+                    }
+                    CONTENT = x.email_body.format(**context)
+                    email_body = render_template("email.html", content=CONTENT)
+                    email_send_result = send_email(
+                        smtp_details,
+                        x.email_subject,
+                        email_body,
+                        x.email_recipients,
+                        x.email_cc,
+                    )
+                    print(email_send_result["message"])
                 break
+        db.session.commit()
+        response = {
+            "status": "success",
+            "message": "Expiring PO Processed successfully",
+            "data": data,
+        }
+        return make_response(jsonify(response)), 200
 
-        response.append(
+
+class SMTPSettingsView(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self):
+        smtp_settings = SMTP.query.all()
+        return jsonify(
             {
-                "id": po.id,
-                "name": po.name,
-                "expiry": str(po.expiry),
-                "color_code": color_code,
+                "message": "SMTP setting list fetched",
+                "status": "success",
+                "data": [s.to_dict() for s in smtp_settings],
             }
         )
 
-    return jsonify(response)
-    return render_template("index.html", response=response)
-
-
-# list and create smtp settings
-@api.route("/smtp", methods=["GET", "POST"])
-@handle_exceptions
-def handle_smtp():
-    if request.method == "GET":
-        smtp_settings = SMTP.query.all()
-        return jsonify([s.to_dict() for s in smtp_settings])
-
-    if request.method == "POST":
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def post(self):
         data = request.json
         new_smtp = SMTP(**data)
+        result = check_smtp(new_smtp.to_dict())
+        if result["status"] == "error":
+            return jsonify(result)
         db.session.add(new_smtp)
         db.session.commit()
-        return jsonify(new_smtp.to_dict()), 201
+        return (
+            jsonify(
+                {
+                    "message": "SMTP Setting created",
+                    "status": "success",
+                    "data": new_smtp.to_dict(),
+                }
+            ),
+            201,
+        )
 
 
-# view and update a smtp setting
-@api.route("/smtp/<int:id>", methods=["GET", "POST"])
-@handle_exceptions
-def handle_smtp_by_id(id):
-    smtp = SMTP.query.get_or_404(id)
-    if request.method == "GET":
-        return jsonify(smtp.to_dict())
+class SMTPSettingsByIdView(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self, id):
+        smtp = SMTP.query.get_or_404(id)
+        return jsonify(
+            {
+                "message": "SMTP Setting fetched",
+                "status": "success",
+                "data": smtp.to_dict(),
+            }
+        )
 
-    if request.method == "POST":
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def delete(self, id):
+        SMTP.query.filter_by(id=id).delete()
+        db.session.commit()
+        return jsonify({"message": "SMTP Setting deleted", "status": "success"})
+
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def post(self, id):
+        smtp = SMTP.query.get_or_404(id)
         data = request.json
+        result = check_smtp(data)
+        if result["status"] == "error":
+            return jsonify(result)
         for key, value in data.items():
             setattr(smtp, key, value)
+        db.session.flush()
         db.session.commit()
-        return jsonify(smtp.to_dict())
+        return jsonify(
+            {
+                "message": "SMTP Setting validated and updated",
+                "status": "success",
+                "data": smtp.to_dict(),
+            }
+        )
 
 
-# list and create notification types
-@api.route("/notification-types", methods=["GET", "POST"])
-@handle_exceptions
-def handle_notification_types():
-    if request.method == "GET":
-        notification_types = NotificationType.query.all()
-        return jsonify([nt.to_dict() for nt in notification_types])
-
-    if request.method == "POST":
-        data = request.json
-        new_type = NotificationType(**data)
-        db.session.add(new_type)
-        db.session.commit()
-        return jsonify(new_type.to_dict()), 201
-
-
-# view and update notification types
-@api.route("/notification-types/<int:id>", methods=["GET", "POST"])
-@handle_exceptions
-def handle_notification_type_by_id(id):
-    notification_type = NotificationType.query.get_or_404(id)
-    if request.method == "GET":
-        return jsonify(notification_type.to_dict())
-
-    if request.method == "POST":
-        data = request.json
-        for key, value in data.items():
-            setattr(notification_type, key, value)
-        db.session.commit()
-        return jsonify(notification_type.to_dict())
-
-
-# list and create email templates
-@api.route("/email-templates", methods=["GET", "POST"])
-@handle_exceptions
-def handle_email_templates():
-    if request.method == "GET":
-        email_templates = EmailTemplate.query.all()
-        return jsonify([et.to_dict() for et in email_templates])
-
-    if request.method == "POST":
-        data = request.json
-        new_template = EmailTemplate(**data)
-        db.session.add(new_template)
-        db.session.commit()
-        return jsonify(new_template.to_dict()), 201
-
-
-# view and update an email template
-@api.route("/email-templates/<int:id>", methods=["GET", "POST"])
-@handle_exceptions
-def handle_email_template_by_id(id):
-    email_template = EmailTemplate.query.get_or_404(id)
-    if request.method == "GET":
-        return jsonify(email_template.to_dict())
-
-    if request.method == "POST":
-        data = request.json
-        for key, value in data.items():
-            setattr(email_template, key, value)
-        db.session.commit()
-        return jsonify(email_template.to_dict())
-
-
-# List and create Notification Settings
-@api.route("/notification-settings", methods=["GET", "POST"])
-@handle_exceptions
-def handle_notification_settings():
-    if request.method == "GET":
+class NotificationSettingsView(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self):
         notification_settings = NotificationSettings.query.all()
-        return jsonify([ns.to_dict() for ns in notification_settings])
+        data = [ns.to_dict() for ns in notification_settings]
+        for item in data:
+            notification_mediums = (
+                db.session.query(NotificationMediums, NotificationType.name)
+                .select_from(NotificationMediums)
+                .join(
+                    NotificationType,
+                    NotificationMediums.notification_type_id == NotificationType.id,
+                )
+                .filter(NotificationMediums.notification_settings_id == item["id"])
+                .all()
+            )
 
-    if request.method == "POST":
+            mediums = []
+            for medium, notification_type_name in notification_mediums:
+                mediums.append(
+                    {
+                        "id": medium.id,
+                        "enabled": medium.enabled,
+                        "notification_type_name": notification_type_name,
+                        "smtp_id": medium.smtp_id,
+                    }
+                )
+            item["mediums"] = mediums
+
+        return jsonify(
+            {
+                "message": "Notification Settings list fetched",
+                "status": "success",
+                "data": data,
+            }
+        )
+
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def post(self):  # WONT BE USED BY USER BUT BY ADMIN
         data = request.json
         new_setting = NotificationSettings(**data)
         db.session.add(new_setting)
-        db.session.commit()
 
-        # Retrieve all NotificationType instances
         notification_types = NotificationType.query.all()
 
-        # Create corresponding NotificationMedium objects
+        smtp_id = None
+        smtp_settings = SMTP.query.all()
+        if smtp_settings:
+            smtp_id = smtp_settings[0].to_dict()["id"]
+
         for notification_type in notification_types:
             new_medium = NotificationMediums(
                 notification_settings_id=new_setting.id,
                 notification_type_id=notification_type.id,
-                enabled=True,
+                enabled=False,
+                smtp_id=smtp_id,
             )
             db.session.add(new_medium)
 
         db.session.commit()
-        return jsonify(new_setting.to_dict()), 201
+        return (
+            jsonify(
+                {
+                    "message": "Notification Settings created",
+                    "status": "success",
+                    "data": new_setting.to_dict(),
+                }
+            ),
+            201,
+        )
 
 
-# view and update a notification settings
-@api.route("/notification-settings/<int:id>", methods=["GET", "POST"])
-@handle_exceptions
-def handle_notification_setting_by_id(id):
-    notification_setting = NotificationSettings.query.get_or_404(id)
-    if request.method == "GET":
-        return jsonify(notification_setting.to_dict())
+class NotificationSettingsByIdView(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self, id):  # WONT BE USED BY USER
+        notification_setting = NotificationSettings.query.get_or_404(id)
+        return jsonify(
+            {
+                "message": "Notification Settings fetched",
+                "status": "success",
+                "data": notification_setting.to_dict(),
+            }
+        )
 
-    if request.method == "POST":
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def post(self, id):  # WONT BE USED BY USER
+        notification_setting = NotificationSettings.query.get_or_404(id)
         data = request.json
         for key, value in data.items():
             setattr(notification_setting, key, value)
         db.session.commit()
-        return jsonify(notification_setting.to_dict())
-
-
-# List the notification Mediums
-@api.route("/notification-mediums", methods=["GET"])
-@handle_exceptions
-def handle_notification_mediums():
-    notification_settings_id = request.args.get("notification_settings_id")
-    mediums = (
-        db.session.query(NotificationMediums, NotificationType.name)
-        .join(NotificationType)
-        .filter(
-            NotificationMediums.notification_settings_id == notification_settings_id
-        )
-        .all()
-    )
-
-    response = []
-    for medium, notification_type_name in mediums:
-        response.append(
+        return jsonify(
             {
-                "id": medium.id,
-                "notification_settings_id": medium.notification_settings_id,
-                "notification_type_id": medium.notification_type_id,
-                "email_template_id": medium.email_template_id,
-                "smtp_id": medium.smtp_id,
-                "enabled": medium.enabled,
-                "notification_type_name": notification_type_name,  # Accessing name directly from the query
+                "message": "Notification Settings list updated",
+                "status": "success",
+                "data": notification_setting.to_dict(),
             }
         )
 
-    return jsonify(response)
 
+class NotificationMediumByIdView(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self, id):
+        medium = NotificationMediums.query.get_or_404(id)
+        return jsonify(
+            {
+                "message": "Notification medium fetched",
+                "status": "success",
+                "data": medium.to_dict(),
+            }
+        )
 
-# View and Update a notification Medium
-@api.route("/notification-mediums/<int:id>", methods=["GET", "POST"])
-@handle_exceptions
-def handle_notification_medium_by_id(id):
-    medium = NotificationMediums.query.get_or_404(id)
-    if request.method == "GET":
-        return jsonify(medium.to_dict())
-
-    if request.method == "POST":
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def post(self, id):
+        medium = NotificationMediums.query.get_or_404(id)
         data = request.json
         for key, value in data.items():
             setattr(medium, key, value)
         db.session.commit()
-        return jsonify(medium.to_dict())
+        return jsonify(
+            {
+                "message": "Notification medium updated",
+                "status": "success",
+                "data": medium.to_dict(),
+            }
+        )
 
 
-# list and create notification days
-@api.route("/notification-days", methods=["GET", "POST"])
-@handle_exceptions
-def handle_notification_days():
-    if request.method == "GET":
-        days = NotificationDays.query.all()
-        return jsonify([nd.to_dict() for nd in days])
+class NotificationDaysView(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self):
+        notification_medium_id = request.args.get("notification_medium_id")
+        days = NotificationDays.query.filter(
+            NotificationDays.notification_medium_id == notification_medium_id
+        ).all()
+        if days:
+            return jsonify(
+                {
+                    "message": "Notification days list fetched based on the medium id",
+                    "status": "success",
+                    "data": [nd.to_dict() for nd in days],
+                }
+            )
+        else:
+            return jsonify(
+                {
+                    "message": "Notification days not found for the medium id",
+                    "status": "error",
+                }
+            )
 
-    if request.method == "POST":
-        data = request.json
-        new_day = NotificationDays(**data)
-        db.session.add(new_day)
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def post(self):
+        data = request.get_json()
+        if not isinstance(data, list):
+            return (
+                jsonify(
+                    {
+                        "message": "Invalid data format, expected a list.",
+                        "status": "error",
+                    }
+                ),
+                400,
+            )
+
+        updated_or_created = []
+
+        for item in data:
+            notification_day = None
+
+            if "id" in item:
+                notification_day = NotificationDays.query.get(item["id"])
+
+            if notification_day:  # existing record
+                for key, value in item.items():
+                    if key != "id":
+                        if key in ["email_cc", "email_recipients"] and isinstance(
+                            value, list
+                        ):
+                            setattr(notification_day, key, json.dumps(value))
+                        else:
+                            setattr(notification_day, key, value)
+            else:  # new record
+                if "email_cc" in item and isinstance(item["email_cc"], list):
+                    item["email_cc"] = json.dumps(item["email_cc"])
+
+                if "email_recipients" in item and isinstance(
+                    item["email_recipients"], list
+                ):
+                    item["email_recipients"] = json.dumps(item["email_recipients"])
+
+                notification_day = NotificationDays(**item)
+                db.session.add(notification_day)
+
+            updated_or_created.append(notification_day)
+        db.session.flush()
         db.session.commit()
-        return jsonify(new_day.to_dict()), 201
+        return (
+            jsonify(
+                {
+                    "message": "Notification days have been created/updated successfully.",
+                    "status": "success",
+                    "data": [nd.to_dict() for nd in updated_or_created],
+                }
+            ),
+            201,
+        )
 
 
-# update notification days
-@api.route("/notification-days/<int:id>", methods=["POST"])
-@handle_exceptions
-def handle_notification_day_by_id(id):
-    day = NotificationDays.query.get_or_404(id)
-    if request.method == "POST":
-        data = request.json
-        for key, value in data.items():
-            setattr(day, key, value)
-        db.session.commit()
-        return jsonify(day.to_dict())
+api.add_url_rule(
+    "/purchase_orders",
+    view_func=PurchaseOrderView.as_view("purchase_orders"),
+    methods=["GET"],
+)
+api.add_url_rule(
+    "/process_po_expirations",
+    view_func=ProcessPoExpirations.as_view("process_po_expirations"),
+    methods=["GET"],
+)
+# 0 3 * * * curl -s http://localhost:5000/process_po_expirations
+
+api.add_url_rule(
+    "/smtp",
+    view_func=SMTPSettingsView.as_view("smtp_settings"),
+    methods=["GET", "POST"],
+)
+api.add_url_rule(
+    "/smtp/<int:id>",
+    view_func=SMTPSettingsByIdView.as_view("smtp_settings_by_id"),
+    methods=["GET", "DELETE", "POST"],
+)
+
+api.add_url_rule(
+    "/notification-settings",
+    view_func=NotificationSettingsView.as_view("notification_settings"),
+    methods=["GET", "POST"],
+)
+api.add_url_rule(
+    "/notification-settings/<int:id>",
+    view_func=NotificationSettingsByIdView.as_view("notification_settings_by_id"),
+    methods=["GET", "POST"],
+)
+
+
+api.add_url_rule(
+    "/notification-mediums/<int:id>",
+    view_func=NotificationMediumByIdView.as_view("notification_medium_by_id"),
+    methods=["GET", "POST"],
+)
+
+api.add_url_rule(
+    "/notification-days",
+    view_func=NotificationDaysView.as_view("notification_days"),
+    methods=["GET", "POST"],
+)

@@ -3,16 +3,24 @@ import os
 from flask import Flask
 from flask_debugtoolbar import DebugToolbarExtension
 from flask_cors import CORS
+from cryptography.fernet import Fernet
 from dotenv import load_dotenv
-
-from models import db
-from routes import api
-from config import Config
 
 load_dotenv()
 
+encryption_key = os.environ.get("ENCRYPTION_KEY")
+if encryption_key is None:
+    raise ValueError(
+        "--------Encryption key not found in environment variables.-------"
+    )
+fernet = Fernet(encryption_key)
+
 
 def create_app():
+    from models import db
+    from routes import api
+    from config import Config
+
     app = Flask(__name__)
     app.debug = True
 

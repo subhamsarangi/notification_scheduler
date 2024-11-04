@@ -97,7 +97,7 @@ def send_email(smtp_details, email_subject, email_body, recipients, cc=None):
             recipients += cc
 
         msg.attach(MIMEText(email_body, "html"))
-
+        print(recipients, "----------")
         if smtp_details["port"] == 465:
             with smtplib.SMTP_SSL(
                 smtp_details["server"], smtp_details["port"], timeout=timeout

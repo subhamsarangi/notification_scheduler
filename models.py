@@ -1,6 +1,7 @@
 import datetime
 import json
 from flask_sqlalchemy import SQLAlchemy
+from app import fernet
 
 db = SQLAlchemy()
 
@@ -23,8 +24,23 @@ class SMTP(db.Model):
     server = db.Column(db.String(100), nullable=False)
     port = db.Column(db.Integer, nullable=False)
     username = db.Column(db.String(100), nullable=False)
-    password = db.Column(db.String(100), nullable=False)
+    password = db.Column(db.String(255), nullable=False)
     use_tls = db.Column(db.Boolean, default=True)
+
+    def __init__(
+        self, server: str, port: int, username: str, password: str, use_tls: bool = True
+    ):
+        self.server = server
+        self.port = port
+        self.username = username
+        self.password = self.encrypt_password(password)
+        self.use_tls = use_tls
+
+    def encrypt_password(self, password: str) -> str:
+        return fernet.encrypt(password.encode()).decode()
+
+    def decrypt_password(self) -> str:
+        return fernet.decrypt(self.password.encode()).decode()
 
     def to_dict(self):
         return {
@@ -32,7 +48,7 @@ class SMTP(db.Model):
             "server": self.server,
             "port": self.port,
             "username": self.username,
-            "password": self.password,  # NEW
+            "password": self.decrypt_password(),
             "use_tls": self.use_tls,
         }
 
@@ -79,7 +95,7 @@ class NotificationDays(db.Model):
     email_subject = db.Column(db.String(100), nullable=True)
     email_body = db.Column(db.Text, nullable=True)
     email_recipients = db.Column(db.Text, nullable=True)
-    email_cc = db.Column(db.Text, nullable=True)  # Store as JSON
+    email_cc = db.Column(db.Text, nullable=True)
 
     def to_dict(self):
         return {

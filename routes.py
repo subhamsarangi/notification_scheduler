@@ -2,7 +2,6 @@ import os
 from datetime import datetime, timedelta
 import json
 
-from sqlalchemy import text, and_
 from flask import (
     Blueprint,
     request,
@@ -31,6 +30,7 @@ from models import (
 api = Blueprint("api", __name__)
 
 
+# DOWNLAD FILE TESTING
 @api.route("/download/<filename>", methods=["GET"])
 def download_file(filename):
     try:
@@ -58,6 +58,7 @@ def download_file(filename):
         return jsonify({"error": "An error occurred"}), 500
 
 
+# EMAIL TESTING
 @api.route("/send-email", methods=["GET"])
 def send_email_view():
     try:
@@ -94,6 +95,7 @@ def send_email_view():
         return jsonify({"error": f"An unexpected error occurred. {str(e)}"}), 500
 
 
+# LISTING
 class PurchaseOrderView(MethodView):
     @cross_origin(supports_credentials=True)
     @handle_exceptions
@@ -138,6 +140,7 @@ class PurchaseOrderView(MethodView):
         return make_response(jsonify(response)), 200
 
 
+# SCHEDULED JOB
 class ProcessPoExpirations(MethodView):
     @cross_origin(supports_credentials=True)
     @handle_exceptions
@@ -175,7 +178,6 @@ class ProcessPoExpirations(MethodView):
             .filter(PurchaseOrder.expiry.between(least_date, highest_date))
             .all()
         )
-        print(purchase_orders, "--------")
         data = []
         for po in purchase_orders:
             po = po.to_dict()
@@ -183,16 +185,17 @@ class ProcessPoExpirations(MethodView):
             future_date = datetime.strptime(str(po["expiry"]), "%Y-%m-%d").date()
             current_date = datetime.now().date()
             difference = (future_date - current_date).days
-
             notification_heading = "PO expiry alert"
+
             for x, smtp_id in notification_days:
                 if difference < 0:
-                    if difference == x.start_day:
+                    if difference >= x.start_day:
                         notification_body = f"PO {po['name']} has expired {difference} day(s) ago on {po['expiry']}"
                     else:
                         continue
                 elif difference > 0:
-                    if difference == x.end_day:
+                    print(difference, x.end_day)
+                    if difference <= x.end_day:
                         notification_body = f"PO {po['name']} will expire in {difference} day(s) on {po['expiry']}"
                     else:
                         continue
@@ -201,7 +204,6 @@ class ProcessPoExpirations(MethodView):
                         notification_body = f"PO {po['name']} has expired today"
                     else:
                         continue
-
                 existing_notification = (
                     db.session.query(WebNotificationItem)
                     .filter_by(body=notification_body)
@@ -236,7 +238,7 @@ class ProcessPoExpirations(MethodView):
                         continue
                     context = {
                         "expiry_date": po["expiry"],
-                        "po_number": po["po_number"],
+                        "po_number": po["name"],
                     }
                     CONTENT = x.email_body.format(**context)
                     email_body = render_template("email.html", content=CONTENT)
@@ -258,6 +260,7 @@ class ProcessPoExpirations(MethodView):
         return make_response(jsonify(response)), 200
 
 
+# SMTP
 class SMTPSettingsView(MethodView):
     @cross_origin(supports_credentials=True)
     @handle_exceptions
@@ -276,15 +279,15 @@ class SMTPSettingsView(MethodView):
     def post(self):
         data = request.json
         new_smtp = SMTP(**data)
-        result = check_smtp(new_smtp.to_dict())
-        if result["status"] == "error":
-            return jsonify(result)
+        smtp_check_result = check_smtp(new_smtp.to_dict())
+        if smtp_check_result["status"] == "error":
+            return jsonify(smtp_check_result)
         db.session.add(new_smtp)
         db.session.commit()
         return (
             jsonify(
                 {
-                    "message": "SMTP Setting created",
+                    "message": "SMTP Setting validated and created",
                     "status": "success",
                     "data": new_smtp.to_dict(),
                 }
@@ -308,21 +311,17 @@ class SMTPSettingsByIdView(MethodView):
 
     @cross_origin(supports_credentials=True)
     @handle_exceptions
-    def delete(self, id):
-        SMTP.query.filter_by(id=id).delete()
-        db.session.commit()
-        return jsonify({"message": "SMTP Setting deleted", "status": "success"})
-
-    @cross_origin(supports_credentials=True)
-    @handle_exceptions
     def post(self, id):
         smtp = SMTP.query.get_or_404(id)
         data = request.json
-        result = check_smtp(data)
-        if result["status"] == "error":
-            return jsonify(result)
+        smtp_check_result = check_smtp(data)
+        if smtp_check_result["status"] == "error":
+            return jsonify(smtp_check_result)
         for key, value in data.items():
-            setattr(smtp, key, value)
+            if "password" in key:
+                setattr(smtp, key, smtp.encrypt_password(value))
+            else:
+                setattr(smtp, key, value)
         db.session.flush()
         db.session.commit()
         return jsonify(
@@ -334,6 +333,7 @@ class SMTPSettingsByIdView(MethodView):
         )
 
 
+# NOTIFICATION SETTINGS
 class NotificationSettingsView(MethodView):
     @cross_origin(supports_credentials=True)
     @handle_exceptions
@@ -438,6 +438,7 @@ class NotificationSettingsByIdView(MethodView):
         )
 
 
+# NOTIFICATION MEDIUMS
 class NotificationMediumByIdView(MethodView):
     @cross_origin(supports_credentials=True)
     @handle_exceptions
@@ -468,6 +469,7 @@ class NotificationMediumByIdView(MethodView):
         )
 
 
+# NOTIFICATION DAYS
 class NotificationDaysView(MethodView):
     @cross_origin(supports_credentials=True)
     @handle_exceptions
@@ -551,6 +553,7 @@ class NotificationDaysView(MethodView):
         )
 
 
+# URL RULES
 api.add_url_rule(
     "/purchase_orders",
     view_func=PurchaseOrderView.as_view("purchase_orders"),

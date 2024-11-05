@@ -11,13 +11,12 @@ It allows users to manage various types of notifications, including email and we
 - **Multiple Notification Mediums**: Support for various notification mediums, including email and web alerts, enabling flexible notification delivery.
 - **Scheduling**: Set notifications to trigger a specified number of days before important events, with customizable color codes for visual cues.
 
-## Endpoints
-
-The project includes several RESTful API endpoints to interact with notification settings, email templates, SMTP configurations, and notification days. These endpoints allow for CRUD operations on all entities, ensuring comprehensive management of notifications.
-
 ## Getting Started
 
 1. **Clone the repository**.
 2. **Install poetry for dependency management**
 3. **Install required packages** using `poetry install`.
 4. **Run the Flask application** using `python app.py` or `flask run`.
+
+## Further Details
+[Technical points](/docs/Technical.md)

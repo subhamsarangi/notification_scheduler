@@ -71,9 +71,8 @@ def send_email_view():
 
         context = {"username": "Subham", "product_name": "Product XYZ"}
 
-        CONTENT = email_data["email_body"].format(**context)
-        print(CONTENT, "----------------------->")
-        email_body = render_template("email.html", content=CONTENT)
+        EMAIL_CONTENT = email_data["email_body"].format(**context)
+        email_body = render_template("email.html", content=EMAIL_CONTENT)
 
         email_send_result = send_email(
             smtp_details,
@@ -165,13 +164,12 @@ class ProcessPoExpirations(MethodView):
         start_day_values = [x.start_day for x, _ in notification_days] or [0]
         least_day = min(start_day_values)
         least_date = (datetime.now() + timedelta(days=least_day)).strftime("%Y-%m-%d")
-        # print(start_day_values, least_day, least_date, "-------------")
+
         end_day_values = [x.end_day for x, _ in notification_days] or [0]
         highest_day = max(end_day_values)
         highest_date = (datetime.now() + timedelta(days=highest_day)).strftime(
             "%Y-%m-%d"
         )
-        # print(end_day_values, highest_day, highest_date, "**************")
 
         purchase_orders = (
             db.session.query(PurchaseOrder)
@@ -181,32 +179,39 @@ class ProcessPoExpirations(MethodView):
         data = []
         for po in purchase_orders:
             po = po.to_dict()
+            context = {
+                "expiry_date": po["expiry"],
+                "po_number": po["name"],
+            }
             data.append(po)
             future_date = datetime.strptime(str(po["expiry"]), "%Y-%m-%d").date()
             current_date = datetime.now().date()
             difference = (future_date - current_date).days
+            context["difference"] = difference
+
             notification_heading = "PO expiry alert"
 
             for x, smtp_id in notification_days:
                 if difference < 0:
                     if difference >= x.start_day:
-                        notification_body = f"PO {po['name']} has expired {difference} day(s) ago on {po['expiry']}"
+                        notification_body = "PO {po_number} has expired {difference} day(s) ago on {expiry_date}"
                     else:
                         continue
                 elif difference > 0:
-                    print(difference, x.end_day)
                     if difference <= x.end_day:
-                        notification_body = f"PO {po['name']} will expire in {difference} day(s) on {po['expiry']}"
+                        notification_body = "PO {po_number} will expire in {difference} day(s) on {expiry_date}"
                     else:
                         continue
                 else:
                     if difference == x.start_day and difference == x.end_day:
-                        notification_body = f"PO {po['name']} has expired today"
+                        notification_body = "PO {po_number} has expired today"
                     else:
                         continue
+
+                NOTIFICATION_CONTENT = notification_body.format(**context)
                 existing_notification = (
                     db.session.query(WebNotificationItem)
-                    .filter_by(body=notification_body)
+                    .filter_by(body=NOTIFICATION_CONTENT)
                     .first()
                 )
                 if existing_notification:
@@ -215,7 +220,7 @@ class ProcessPoExpirations(MethodView):
                     new_web_notification = WebNotificationItem(
                         **{
                             "heading": notification_heading,
-                            "body": notification_body,
+                            "body": NOTIFICATION_CONTENT,
                         }
                     )
                     db.session.add(new_web_notification)
@@ -236,18 +241,15 @@ class ProcessPoExpirations(MethodView):
                     else:
                         print(f'{po["name"]} Mail not sent.')
                         continue
-                    context = {
-                        "expiry_date": po["expiry"],
-                        "po_number": po["name"],
-                    }
-                    CONTENT = x.email_body.format(**context)
-                    email_body = render_template("email.html", content=CONTENT)
+
+                    EMAIL_CONTENT = x.email_body.format(**context)
+                    email_body = render_template("email.html", content=EMAIL_CONTENT)
                     email_send_result = send_email(
                         smtp_details,
                         x.email_subject,
                         email_body,
-                        x.email_recipients,
-                        x.email_cc,
+                        eval(x.email_recipients),
+                        eval(x.email_cc),
                     )
                     print(email_send_result["message"])
                 break

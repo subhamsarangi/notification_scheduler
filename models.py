@@ -15,7 +15,7 @@ class PurchaseOrder(db.Model):
         return {
             "id": self.id,
             "name": self.name,
-            "expiry": str(self.expiry),  # Convert date to string
+            "expiry": str(self.expiry),
         }
 
 

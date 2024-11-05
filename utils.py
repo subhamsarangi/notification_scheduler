@@ -1,3 +1,4 @@
+import os
 import traceback
 import logging
 from functools import wraps
@@ -12,18 +13,13 @@ logging.basicConfig(level=logging.ERROR)
 
 
 smtp_details = {
-    "server": "smtp.gmail.com",
-    "port": 465,
-    "username": "dev.ivanifotech@gmail.com",
-    "password": "hreizmncqyjmnjfv",
+    "server": os.environ.get("SMTP_SERVER"),
+    "port": int(os.environ.get("SMTP_PORT")),
+    "username": os.environ.get("SMTP_USERNAME"),
+    "password": os.environ.get("SMTP_PASSWORD"),
 }
 
-# smtp_details = {
-#     "server": "app.debugmail.io",
-#     "port": 25,
-#     "username": "ad9b47f1-3c33-4c1c-a9c7-3215b6bd69c9",
-#     "password": "e237e847-13c9-4d6d-96d4-3e50f2a03e46",
-# }
+print(smtp_details, "----------------")
 
 
 def handle_exceptions(f):
@@ -96,6 +92,7 @@ def send_email(smtp_details, email_subject, email_body, recipients, cc=None):
             msg["Cc"] = ", ".join(cc)
             recipients += cc
 
+        print(recipients, "*****************************", msg.as_string())
         msg.attach(MIMEText(email_body, "html"))
         if smtp_details["port"] == 465:
             with smtplib.SMTP_SSL(

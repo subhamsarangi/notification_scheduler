@@ -24,6 +24,7 @@ from models import (
     NotificationMediums,
     NotificationDays,
     WebNotificationItem,
+    EmailNotificationItem
 )
 
 
@@ -145,8 +146,8 @@ class ProcessPoExpirations(MethodView):
     @handle_exceptions
     def get(self):
         notification_name = "PO Expiry"
-        notification_days = (
-            db.session.query(NotificationDays, NotificationMediums.smtp_id)
+        web_notification_days = (
+            db.session.query(NotificationDays)
             .select_from(NotificationDays)
             .join(
                 NotificationMediums,
@@ -156,16 +157,21 @@ class ProcessPoExpirations(MethodView):
                 NotificationSettings,
                 NotificationMediums.notification_settings_id == NotificationSettings.id,
             )
+            .join(
+                NotificationType,
+                NotificationMediums.notification_type_id == NotificationType.id,
+            )
             .filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
             .filter(NotificationMediums.enabled == True)
+            .filter(NotificationType.name == "Web")
             .order_by(NotificationDays.start_day)
             .all()
         )
-        start_day_values = [x.start_day for x, _ in notification_days] or [0]
+        start_day_values = [x.start_day for x in web_notification_days] or [0]
         least_day = min(start_day_values)
         least_date = (datetime.now() + timedelta(days=least_day)).strftime("%Y-%m-%d")
 
-        end_day_values = [x.end_day for x, _ in notification_days] or [0]
+        end_day_values = [x.end_day for x in web_notification_days] or [0]
         highest_day = max(end_day_values)
         highest_date = (datetime.now() + timedelta(days=highest_day)).strftime(
             "%Y-%m-%d"
@@ -176,90 +182,202 @@ class ProcessPoExpirations(MethodView):
             .filter(PurchaseOrder.expiry.between(least_date, highest_date))
             .all()
         )
-        data = []
+        web_data = []
+        print(len(purchase_orders), "WEB")
         for po in purchase_orders:
             po = po.to_dict()
             context = {
                 "expiry_date": po["expiry"],
                 "po_number": po["name"],
             }
-            data.append(po)
+            web_data.append(po)
             future_date = datetime.strptime(str(po["expiry"]), "%Y-%m-%d").date()
             current_date = datetime.now().date()
             difference = (future_date - current_date).days
-            context["difference"] = difference
+            context["difference"] = abs(difference)
 
-            notification_heading = "PO expiry alert"
+            web_notification_heading = "PO expiry alert"
 
-            for x, smtp_id in notification_days:
+            for x in web_notification_days:
                 if difference < 0:
                     if difference >= x.start_day:
-                        notification_body = "PO {po_number} has expired {difference} day(s) ago on {expiry_date}"
+                        web_notification_body = "PO {po_number} has expired {difference} day(s) ago on {expiry_date}"
                     else:
                         continue
                 elif difference > 0:
                     if difference <= x.end_day:
-                        notification_body = "PO {po_number} will expire in {difference} day(s) on {expiry_date}"
+                        web_notification_body = "PO {po_number} will expire in {difference} day(s) on {expiry_date}"
                     else:
                         continue
                 else:
                     if difference == x.start_day and difference == x.end_day:
-                        notification_body = "PO {po_number} has expired today"
+                        web_notification_body = "PO {po_number} has expired today"
                     else:
                         continue
 
-                NOTIFICATION_CONTENT = notification_body.format(**context)
-                existing_notification = (
+                WEB_NOTIFICATION_CONTENT = web_notification_body.format(**context)
+                existing_web_notification = (
                     db.session.query(WebNotificationItem)
-                    .filter_by(body=NOTIFICATION_CONTENT)
+                    .filter_by(body=WEB_NOTIFICATION_CONTENT)
                     .first()
                 )
-                if existing_notification:
+                if existing_web_notification:
                     break
                 else:
                     new_web_notification = WebNotificationItem(
                         **{
-                            "heading": notification_heading,
-                            "body": NOTIFICATION_CONTENT,
+                            "heading": web_notification_heading,
+                            "body": WEB_NOTIFICATION_CONTENT,
                         }
                     )
                     db.session.add(new_web_notification)
-                    print(f'{po["name"]} Notification created.')
+                    print(f'{po["name"]} Web Notification created.')
+                break
+        
+        print(f'-------- All Web Notifications created. -----------')
+        email_notification_days = (
+            db.session.query(NotificationDays, NotificationMediums.smtp_id)
+            .select_from(NotificationDays)
+            .join(
+                NotificationMediums,
+                NotificationDays.notification_medium_id == NotificationMediums.id,
+            )
+            .join(
+                NotificationSettings,
+                NotificationMediums.notification_settings_id == NotificationSettings.id,
+            )
+            .join(
+                NotificationType,
+                NotificationMediums.notification_type_id == NotificationType.id,
+            )
+            .filter(NotificationSettings.name.ilike(f"%{notification_name}%"))
+            .filter(NotificationMediums.enabled == True)
+            .filter(NotificationType.name == "Email")
+            .order_by(NotificationDays.start_day)
+            .all()
+        )
+        start_day_values = [x.start_day for x, _ in email_notification_days] or [0]
+        least_day = min(start_day_values)
+        least_date = (datetime.now() + timedelta(days=least_day)).strftime("%Y-%m-%d")
 
-                    # send mail
-                    smtp_details = None
-                    if smtp_id is not None:
-                        smtp_details = SMTP.query.get(smtp_id)
+        end_day_values = [x.end_day for x, _ in email_notification_days] or [0]
+        highest_day = max(end_day_values)
+        highest_date = (datetime.now() + timedelta(days=highest_day)).strftime(
+            "%Y-%m-%d"
+        )
+
+        purchase_orders = (
+            db.session.query(PurchaseOrder)
+            .filter(PurchaseOrder.expiry.between(least_date, highest_date))
+            .all()
+        )
+        print(len(purchase_orders), "EMAIL")
+        emailed_data = []
+        for po in purchase_orders:
+            po = po.to_dict()
+            context = {
+                "expiry_date": po["expiry"],
+                "po_number": po["name"],
+            }
+            emailed_data.append(po)
+            future_date = datetime.strptime(str(po["expiry"]), "%Y-%m-%d").date()
+            current_date = datetime.now().date()
+            difference = (future_date - current_date).days
+
+            for x, smtp_id in email_notification_days:
+                if difference < 0:
+                    if difference >= x.start_day:
+                        pass
                     else:
+                        continue
+                elif difference > 0:
+                    if difference <= x.end_day:
+                        pass
+                    else:
+                        continue
+                else:
+                    if difference == x.start_day and difference == x.end_day:
+                        pass
+                    else:
+                        continue
+
+                EMAIL_CONTENT = x.email_body.format(**context)
+                print(context, "--------<><>")
+                existing_email_notification = (
+                    db.session.query(EmailNotificationItem)
+                    .filter_by(email_body=EMAIL_CONTENT)
+                    .first()
+                )
+                if existing_email_notification:
+                    break
+                else:
+                    if smtp_id is None:
                         notification_medium = NotificationMediums.query.get(
                             x.notification_medium_id
                         )
                         if notification_medium and notification_medium.smtp_id:
-                            smtp_details = SMTP.query.get(notification_medium.smtp_id)
-                    if smtp_details:
-                        smtp_details = smtp_details.to_dict()
-                    else:
-                        print(f'{po["name"]} Mail not sent.')
-                        continue
+                            smtp_id = notification_medium.smtp_id
+                        else:
+                            print(f'{po["name"]} Mail not created.')
+                            continue
 
-                    EMAIL_CONTENT = x.email_body.format(**context)
-                    email_body = render_template("email.html", content=EMAIL_CONTENT)
-                    email_send_result = send_email(
-                        smtp_details,
-                        x.email_subject,
-                        email_body,
-                        eval(x.email_recipients),
-                        eval(x.email_cc),
-                    )
-                    print(email_send_result["message"])
+                    item = {
+                        "smtp_id": smtp_id,
+                        "email_subject": x.email_subject,
+                        "email_body": EMAIL_CONTENT,
+                    }
+                    if isinstance(eval(x.email_cc), list):
+                        item["email_cc"] = json.dumps(eval(x.email_cc))
+
+                    if isinstance(eval(x.email_recipients), list):
+                        item["email_recipients"] = json.dumps(eval(x.email_recipients))
+
+                    email_notification_item = EmailNotificationItem(**item)
+                    db.session.add(email_notification_item)
+                    print(f'{po["name"]} Email Notification created.')
                 break
         db.session.commit()
         response = {
             "status": "success",
             "message": "Expiring PO Processed successfully",
-            "data": data,
+            "web_data": web_data,
+            "emailed_data": emailed_data,
         }
         return make_response(jsonify(response)), 200
+
+class ProcessEmails(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self):
+        unsent_emails = EmailNotificationItem.query.filter(
+            EmailNotificationItem.is_sent == False,
+            EmailNotificationItem.retry_count < 5,
+        ).all()
+        for email in unsent_emails:
+            email_dict = email.to_dict()
+            smtp_details = SMTP.query.get(email_dict["smtp_id"]).to_dict()
+            email_body = render_template("email.html", content=email_dict["email_body"])
+            email_send_result = send_email(
+                smtp_details,
+                email_dict["email_subject"],
+                email_body,
+                email_dict["email_recipients"],
+                email_dict["email_cc"],
+            )
+            if email_send_result["status"] == "success":
+                email.is_sent = True
+                email.last_error_message = ""
+                email.executed_at = datetime.now()
+            else:
+                email.retry_count += 1
+                email.last_error_message = email_send_result["message"]
+            db.session.commit()
+        response = {
+            "status": "success",
+            "message": "Emails Processed successfully",
+        }
+        return make_response(jsonify(response)), 200
+
 
 
 # SMTP
@@ -566,7 +684,11 @@ api.add_url_rule(
     view_func=ProcessPoExpirations.as_view("process_po_expirations"),
     methods=["GET"],
 )
-# 0 3 * * * curl -s http://localhost:5000/process_po_expirations
+api.add_url_rule(
+    "/process_emails",
+    view_func=ProcessEmails.as_view("ProcessEmails"),
+    methods=["GET"],
+)
 
 api.add_url_rule(
     "/smtp",

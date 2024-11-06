@@ -128,3 +128,31 @@ class WebNotificationItem(db.Model):
             "is_read": self.is_read,
             "created_at": self.created_at,
         }
+
+class EmailNotificationItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    smtp_id = db.Column(db.Integer, nullable=True)
+    email_subject = db.Column(db.String(100), nullable=True)
+    email_body = db.Column(db.Text, nullable=True)
+    email_recipients = db.Column(db.Text, nullable=True)
+    email_cc = db.Column(db.Text, nullable=True)
+    is_sent = db.Column(db.Boolean, default=False, index=True)
+    retry_count = db.Column(db.Integer, default=0)
+    last_error_message = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.now())
+    executed_at = db.Column(db.DateTime)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "smtp_id": self.smtp_id,
+            "email_subject": self.email_subject,
+            "email_body": self.email_body,
+            "email_recipients": (
+                json.loads(self.email_recipients) if self.email_recipients else []
+            ),
+            "email_cc": json.loads(self.email_cc) if self.email_cc else [],
+            "is_sent": self.is_sent,
+            "created_at": self.created_at,
+            "executed_at": self.executed_at,
+        }

@@ -44,7 +44,6 @@ def download_file(filename):
             def remove_file(response):
                 try:
                     os.remove(file_path)
-                    print(f"File {filename} deleted successfully.")
                 except Exception as e:
                     print(f"Error deleting file {filename}: {e}")
                 return response
@@ -183,7 +182,6 @@ class ProcessPoExpirations(MethodView):
             .all()
         )
         web_data = []
-        print(len(purchase_orders), "WEB")
         for po in purchase_orders:
             po = po.to_dict()
             context = {
@@ -231,7 +229,6 @@ class ProcessPoExpirations(MethodView):
                         }
                     )
                     db.session.add(new_web_notification)
-                    print(f'{po["name"]} Web Notification created.')
                 break
         
         print(f'-------- All Web Notifications created. -----------')
@@ -271,7 +268,6 @@ class ProcessPoExpirations(MethodView):
             .filter(PurchaseOrder.expiry.between(least_date, highest_date))
             .all()
         )
-        print(len(purchase_orders), "EMAIL")
         emailed_data = []
         for po in purchase_orders:
             po = po.to_dict()
@@ -302,7 +298,7 @@ class ProcessPoExpirations(MethodView):
                         continue
 
                 EMAIL_CONTENT = x.email_body.format(**context)
-                print(context, "--------<><>")
+                
                 existing_email_notification = (
                     db.session.query(EmailNotificationItem)
                     .filter_by(email_body=EMAIL_CONTENT)
@@ -334,7 +330,6 @@ class ProcessPoExpirations(MethodView):
 
                     email_notification_item = EmailNotificationItem(**item)
                     db.session.add(email_notification_item)
-                    print(f'{po["name"]} Email Notification created.')
                 break
         db.session.commit()
         response = {

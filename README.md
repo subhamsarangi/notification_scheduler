@@ -16,7 +16,7 @@ It allows users to manage various types of notifications, including email and we
 1. **Clone the repository**.
 2. **Install poetry for dependency management**
 3. **Install required packages** using `poetry install`.
-4. **Run the Flask application** using `python app.py` or `flask run`.
+4. **Run the Flask application** using `python app.py` or `flask run --relaod`.
 
 ## Further Details
 [Technical points](/docs/Technical.md)

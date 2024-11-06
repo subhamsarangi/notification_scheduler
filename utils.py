@@ -2,14 +2,15 @@ import os
 import traceback
 import logging
 from functools import wraps
-import smtplib
+import asyncio
 import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import smtplib
+
+import aiosmtplib
 from flask import jsonify
 from werkzeug.exceptions import NotFound, UnsupportedMediaType
-
-logging.basicConfig(level=logging.ERROR)
 
 
 smtp_details = {
@@ -18,9 +19,6 @@ smtp_details = {
     "username": os.environ.get("SMTP_USERNAME"),
     "password": os.environ.get("SMTP_PASSWORD"),
 }
-
-print(smtp_details, "----------------")
-
 
 def handle_exceptions(f):
     @wraps(f)
@@ -92,7 +90,7 @@ def send_email(smtp_details, email_subject, email_body, recipients, cc=None):
             msg["Cc"] = ", ".join(cc)
             recipients += cc
 
-        print(recipients, "*****************************", msg.as_string())
+        print(recipients, "*****************************")
         msg.attach(MIMEText(email_body, "html"))
         if smtp_details["port"] == 465:
             with smtplib.SMTP_SSL(
@@ -127,5 +125,68 @@ def send_email(smtp_details, email_subject, email_body, recipients, cc=None):
     except Exception as e:
         import traceback
 
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
+
+async def async_send_email(smtp_details, email_subject, email_body, recipients, cc=None):
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = smtp_details["username"]
+        msg["To"] = ", ".join(recipients)
+        msg["Subject"] = email_subject
+
+        if cc:
+            msg["Cc"] = ", ".join(cc)
+            recipients += cc
+
+        msg.attach(MIMEText(email_body, "html"))
+
+        # Determine SSL or plain SMTP based on the port
+        if smtp_details["port"] == 465:
+            # For SSL (typically port 465)
+            response = await aiosmtplib.send(
+                msg,
+                hostname=smtp_details["server"],
+                port=smtp_details["port"],
+                username=smtp_details["username"],
+                password=smtp_details["password"],
+                use_tls=True,
+                timeout=5,
+            )
+        else:
+            # For plain SMTP or STARTTLS (typically port 587 or others)
+            response = await aiosmtplib.send(
+                msg,
+                hostname=smtp_details["server"],
+                port=smtp_details["port"],
+                username=smtp_details["username"],
+                password=smtp_details["password"],
+                start_tls=True if smtp_details["port"] == 587 else False,
+                timeout=5,
+            )
+
+        if 'OK' in response[1] or response[0] == "250":
+            return {"status": "success", "message": "Email sent successfully!"}
+        else:
+            return {"status": "error", "message": "Failed to send email."}
+
+    except aiosmtplib.SMTPAuthenticationError:
+        return {
+            "status": "error",
+            "message": "Authentication failed. Check your username and password.",
+        }
+    except aiosmtplib.SMTPConnectError:
+        return {
+            "status": "error",
+            "message": "Connection failed. Check the SMTP server and port.",
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "message": "Connection timed out. The server may not be reachable.",
+        }
+    except Exception as e:
+        import traceback
         traceback.print_exc()
         return {"status": "error", "message": str(e)}

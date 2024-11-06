@@ -37,7 +37,7 @@ def create_app():
     db.init_app(app)
     
     logging.basicConfig()
-    logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+    # logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
     app.register_blueprint(api, url_prefix="/api")
 

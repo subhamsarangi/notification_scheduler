@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 import json
 
+import asyncio
 from flask import (
     Blueprint,
     request,
@@ -13,8 +14,9 @@ from flask import (
 )
 from flask.views import MethodView
 from flask_cors import cross_origin
+from sqlalchemy import and_
 
-from utils import handle_exceptions, check_smtp, send_email, smtp_details
+from utils import handle_exceptions, check_smtp, send_email, async_send_email
 from models import (
     db,
     PurchaseOrder,
@@ -61,6 +63,7 @@ def download_file(filename):
 # EMAIL TESTING
 @api.route("/send-email", methods=["GET"])
 def send_email_view():
+    from utils import smtp_details
     try:
         email_data = {
             "email_body": f"Hey <b>{{username}}</b> how was the {{product_name}}",
@@ -344,9 +347,13 @@ class ProcessEmails(MethodView):
     @cross_origin(supports_credentials=True)
     @handle_exceptions
     def get(self):
+        today = datetime.now().date() 
         unsent_emails = EmailNotificationItem.query.filter(
-            EmailNotificationItem.is_sent == False,
-            EmailNotificationItem.retry_count < 5,
+            and_(
+                EmailNotificationItem.is_sent == False,
+                # EmailNotificationItem.retry_count < 5,
+                EmailNotificationItem.created_at >= datetime.combine(today, datetime.min.time())
+            )
         ).all()
         for email in unsent_emails:
             email_dict = email.to_dict()
@@ -370,6 +377,53 @@ class ProcessEmails(MethodView):
         response = {
             "status": "success",
             "message": "Emails Processed successfully",
+        }
+        return make_response(jsonify(response)), 200
+    
+class ProcessEmails1(MethodView):
+    @cross_origin(supports_credentials=True)
+    @handle_exceptions
+    def get(self):
+        today = datetime.now().date() 
+        unsent_emails = EmailNotificationItem.query.filter(
+            and_(
+                EmailNotificationItem.is_sent == False,
+                EmailNotificationItem.created_at >= datetime.combine(today, datetime.min.time())
+            )
+        ).all()
+
+        async def process_single_email(email):
+            email_dict = email.to_dict()
+            smtp_details = SMTP.query.get(email_dict["smtp_id"]).to_dict()
+            email_body = render_template("email.html", content=email_dict["email_body"])
+
+            # Send email asynchronously
+            email_send_result = await async_send_email(
+                smtp_details,
+                email_dict["email_subject"],
+                email_body,
+                email_dict["email_recipients"],
+                email_dict["email_cc"],
+            )
+
+            if email_send_result["status"] == "success":
+                email.is_sent = True
+                email.last_error_message = ""
+                email.executed_at = datetime.now()
+            else:
+                email.retry_count += 1
+                email.last_error_message = email_send_result["message"]
+            db.session.commit()
+
+        async def process_emails():
+            await asyncio.gather(*(process_single_email(email) for email in unsent_emails))
+
+        # Run the async email processing synchronously
+        asyncio.run(process_emails())
+
+        response = {
+            "status": "success",
+            "message": "Emails processed successfully",
         }
         return make_response(jsonify(response)), 200
 

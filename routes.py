@@ -734,7 +734,7 @@ api.add_url_rule(
     methods=["GET"],
 )
 api.add_url_rule(
-    "/process_emails",
+    "/process_notification_emails",
     view_func=ProcessEmails.as_view("ProcessEmails"),
     methods=["GET"],
 )
